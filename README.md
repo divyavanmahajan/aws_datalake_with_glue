@@ -1,2 +1,4 @@
-# aws_datalake_with_glue
-Template to setup LakeFormation and Glue
+# Setup an AWS Data lake from scratch
+
+The attached template will setup an AWS Data Lake with Lake Formation and Glue.
+
