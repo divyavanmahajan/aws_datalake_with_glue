@@ -1,0 +1,1007 @@
+{
+	"Description": "CloudFormation template to create AWS Lake Formation Transactional DataLake Tutorial Resources",
+	"Mappings": {
+		"GlueScriptLocation": {
+			"iceberg": {
+				"SourceBucket": "lf-public",
+				"Prefix": "scripts/",
+				"Objects": "native-iceberg-create.py"
+			},
+			"hudi": {
+				"SourceBucket": "lf-public",
+				"Prefix": "scripts/",
+				"Objects": "native-hudi-create.py"
+			},
+			"delta": {
+				"SourceBucket": "lf-public",
+				"Prefix": "scripts/",
+				"Objects": "native-delta-create.py"
+			}
+
+		}
+	},
+	"Resources": {
+
+		"LFIcebergGlueDatabase": {
+			"Type": "AWS::Glue::Database",
+			"Properties": {
+				"CatalogId": {
+					"Ref": "AWS::AccountId"
+				},
+				"DatabaseInput": {
+					"Name": "lficebergdb",
+					"Description": "Transactional Database",
+					"CreateTableDefaultPermissions": []
+				}
+			}
+		},
+		"LFHudiGlueDatabase": {
+			"Type": "AWS::Glue::Database",
+			"Properties": {
+				"CatalogId": {
+					"Ref": "AWS::AccountId"
+				},
+				"DatabaseInput": {
+					"Name": "lfhudidb",
+					"Description": "Transactional Database",
+					"CreateTableDefaultPermissions": []
+				}
+			}
+		},
+		"LFDeltaGlueDatabase": {
+			"Type": "AWS::Glue::Database",
+			"Properties": {
+				"CatalogId": {
+					"Ref": "AWS::AccountId"
+				},
+				"DatabaseInput": {
+					"Name": "lfdeltadb",
+					"Description": "Transactional Database",
+					"CreateTableDefaultPermissions": []
+				}
+			}
+		},
+		"LambdaServiceRole": {
+			"Type": "AWS::IAM::Role",
+			"Properties": {
+				"AssumeRolePolicyDocument": {
+					"Version": "2012-10-17",
+					"Statement": [{
+						"Effect": "Allow",
+						"Principal": {
+							"Service": [
+								"lambda.amazonaws.com"
+							]
+						},
+						"Action": "sts:AssumeRole"
+					}]
+				},
+				"ManagedPolicyArns": [
+					"arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole",
+					"arn:aws:iam::aws:policy/AmazonS3ReadOnlyAccess"
+				],
+
+				"Policies": [{
+					"PolicyName": "LF-Lambda-S3-Policy",
+					"PolicyDocument": {
+						"Version": "2012-10-17",
+						"Statement": [{
+							"Effect": "Allow",
+							"Action": [
+								"s3:*"
+							],
+							"Resource": [{
+									"Fn::Join": [
+										"",
+										[
+											"arn:aws:s3:::",
+											{
+												"Ref": "LFTutorialBucket"
+											},
+											"/*"
+										]
+									]
+								},
+								{
+									"Fn::Join": [
+										"",
+										[
+											"arn:aws:s3:::",
+											{
+												"Ref": "LFTutorialBucket"
+											}
+										]
+									]
+								},
+								{
+									"Fn::Join": [
+										"",
+										[
+											"arn:aws:s3:::",
+											"lf-public",
+											"/*"
+										]
+									]
+								},
+								{
+									"Fn::Join": [
+										"",
+										[
+											"arn:aws:s3:::",
+											"lf-public"
+										]
+									]
+								}
+							]
+						}]
+					}
+				}],
+				"RoleName": "LF-LambdaServiceRole"
+			}
+		},
+		"CopyDataLambdaFunction": {
+			"Type": "AWS::Lambda::Function",
+			"Properties": {
+				"Handler": "index.handler",
+				"Runtime": "python3.8",
+				"Role": {
+					"Fn::GetAtt": ["LambdaServiceRole", "Arn"]
+				},
+				"Timeout": 900,
+				"Code": {
+					"ZipFile": "import json\nimport logging\nimport threading\nimport boto3\nimport cfnresponse\ndef copy_objects(source_bucket, dest_bucket, prefix, objects):\n    s3 = boto3.client('s3')\n    for o in objects: \n        key = prefix + o \n        copy_source = {\n            'Bucket': source_bucket,\n            'Key': key\n        }\n        print('copy_source: %s' % copy_source)\n        print('dest_bucket = %s'%dest_bucket)\n        print('key = %s' %key)\n        s3.copy_object(CopySource=copy_source, Bucket=dest_bucket,\n              Key=key)\ndef delete_objects(bucket, prefix, objects):\n    s3 = boto3.client('s3')\n    objects = {'Objects': [{'Key': prefix + o} for o in objects]}\n    s3.delete_objects(Bucket=bucket, Delete=objects)\ndef timeout(event, context):\n    logging.error('Execution is about to time out, sending failure response to CloudFormation')\n    cfnresponse.send(event, context, cfnresponse.FAILED, {}, None)\ndef handler(event, context):\n    # make sure we send a failure to CloudFormation if the function\n    # is going to timeout\n    timer = threading.Timer((context.get_remaining_time_in_millis()\n              / 1000.00) - 0.5, timeout, args=[event, context])\n    timer.start()\n    print('Received event: %s' % json.dumps(event))\n    status = cfnresponse.SUCCESS\n    try:\n        source_bucket = event['ResourceProperties']['SourceBucket']\n        dest_bucket = event['ResourceProperties']['DestBucket']\n        prefix = event['ResourceProperties']['Prefix']\n        objects = event['ResourceProperties']['Objects']\n\n        if event['RequestType'] == 'Delete':\n            delete_objects(dest_bucket, prefix, objects)\n        else:\n            copy_objects(source_bucket, dest_bucket, prefix, objects)\n    except Exception as e:\n        logging.error('Exception: %s' % e, exc_info=True)\n        status = cfnresponse.FAILED\n    finally:\n        timer.cancel()\n        cfnresponse.send(event, context, status, {}, None)\n"
+				}
+			}
+		},
+		"LFRegisterServiceRole": {
+			"Type": "AWS::IAM::Role",
+			"Properties": {
+				"AssumeRolePolicyDocument": {
+					"Version": "2012-10-17",
+					"Statement": [{
+						"Effect": "Allow",
+						"Principal": {
+							"Service": [
+								"lakeformation.amazonaws.com"
+							]
+						},
+						"Action": "sts:AssumeRole"
+					}]
+				},
+				"Policies": [{
+					"PolicyName": "LF-Data-Lake-Storage-Policy",
+					"PolicyDocument": {
+						"Version": "2012-10-17",
+						"Statement": [{
+							"Effect": "Allow",
+							"Action": [
+								"s3:*"
+							],
+							"Resource": [{
+									"Fn::Join": [
+										"",
+										[
+											"arn:aws:s3:::",
+											{
+												"Ref": "OTFDataLakeBucket"
+											},
+											"/*"
+										]
+									]
+								},
+								{
+									"Fn::Join": [
+										"",
+										[
+											"arn:aws:s3:::",
+											{
+												"Ref": "OTFDataLakeBucket"
+											}
+										]
+									]
+								}
+							]
+						}]
+					}
+				}],
+				"RoleName": "LF-OTF-RegisterRole"
+			}
+		},
+		"GlueServiceRole": {
+			"Type": "AWS::IAM::Role",
+			"Properties": {
+				"AssumeRolePolicyDocument": {
+					"Version": "2012-10-17",
+					"Statement": [{
+						"Effect": "Allow",
+						"Principal": {
+							"Service": [
+								"glue.amazonaws.com",
+								"lakeformation.amazonaws.com"
+							]
+						},
+						"Action": "sts:AssumeRole"
+					}]
+				},
+				"ManagedPolicyArns": [
+					"arn:aws:iam::aws:policy/service-role/AWSGlueServiceRole"
+				],
+				"Policies": [{
+						"PolicyName": "LF-Data-Lake-Storage-Policy",
+						"PolicyDocument": {
+							"Version": "2012-10-17",
+							"Statement": [{
+								"Effect": "Allow",
+								"Action": [
+									"s3:*"
+								],
+								"Resource": [{
+										"Fn::Join": [
+											"",
+											[
+												"arn:aws:s3:::",
+												{
+													"Ref": "LFTutorialBucket"
+												},
+												"/*"
+											]
+										]
+									},
+									{
+										"Fn::Join": [
+											"",
+											[
+												"arn:aws:s3:::",
+												{
+													"Ref": "LFTutorialBucket"
+												}
+											]
+										]
+									},
+
+									{
+										"Fn::Join": [
+											"",
+											[
+												"arn:aws:s3:::",
+												{
+													"Ref": "OTFDataLakeBucket"
+												},
+												"/*"
+											]
+										]
+									},
+									{
+										"Fn::Join": [
+											"",
+											[
+												"arn:aws:s3:::",
+												{
+													"Ref": "OTFDataLakeBucket"
+												}
+											]
+										]
+									}
+								]
+							}]
+						}
+					},
+					{
+						"PolicyName": "LF-DataAccess-Policy",
+						"PolicyDocument": {
+							"Version": "2012-10-17",
+							"Statement": [{
+								"Effect": "Allow",
+								"Action": [
+									"lakeformation:GetDataAccess",
+									"lakeformation:GrantPermissions",
+                  "iam:PassRole"
+								],
+								"Resource": "*"
+							}]
+						}
+					}
+				],
+				"RoleName": "LF-OTF-GlueServiceRole"
+			}
+		},
+		"OTFDataLakeBucket": {
+			"Type": "AWS::S3::Bucket",
+			"Properties": {
+				"BucketName": {
+					"Fn::Join": [
+						"-",
+						[
+							"lf-otf-datalake",
+							{
+								"Ref": "AWS::AccountId"
+							}
+						]
+					]
+				}
+			}
+		},
+		"LFTutorialBucket": {
+			"Type": "AWS::S3::Bucket",
+			"Properties": {
+				"BucketName": {
+					"Fn::Join": [
+						"-",
+						[
+							"lf-otf-tutorial",
+							{
+								"Ref": "AWS::AccountId"
+							}
+						]
+					]
+				}
+			}
+		},
+		"LFUsersPassword": {
+			"Type": "AWS::SecretsManager::Secret",
+			"Properties": {
+				"Description": "Secret password",
+				"Name": {
+					"Fn::Sub": "${AWS::StackName}-lf-consumer-analystuser-credentials"
+				},
+				"GenerateSecretString": {
+					"SecretStringTemplate": "{\"username\":\"lf-consumer-analystuser\"}",
+					"GenerateStringKey": "password",
+					"PasswordLength": 16,
+					"ExcludeCharacters": "\"@/\\"
+				}
+			}
+		},
+		"BusinessAnalystUser": {
+			"Type": "AWS::IAM::User",
+			"Properties": {
+				"Path": "/",
+				"LoginProfile": {
+					"Password": {
+						"Fn::Sub": "{{resolve:secretsmanager:${LFUsersPassword}::password}}"
+					},
+					"PasswordResetRequired": false
+				},
+				"Policies": [{
+					"PolicyName": "LF-Athena-Query-Result-Policy",
+					"PolicyDocument": {
+						"Version": "2012-10-17",
+						"Statement": [{
+							"Effect": "Allow",
+							"Action": [
+								"s3:Put*",
+								"s3:Get*",
+								"s3:List*"
+							],
+							"Resource": [{
+								"Fn::Join": [
+									"",
+									[
+										"arn:aws:s3:::",
+										{
+											"Ref": "LFTutorialBucket"
+										},
+										"/athena-results/*"
+									]
+								]
+							}]
+						}]
+					}
+				}],
+				"ManagedPolicyArns": [
+					"arn:aws:iam::aws:policy/AmazonAthenaFullAccess"
+				],
+				"UserName": "lf-consumer-analystuser"
+			}
+		},
+		"IcebergJob": {
+			"Type": "AWS::Glue::Job",
+			"Properties": {
+				"Command": {
+					"Name": "glueetl",
+					"PythonVersion": "3",
+					"ScriptLocation": {
+						"Fn::Join": [
+							"",
+							[
+								"s3://",
+								"lf-otf-tutorial-",
+								{
+									"Ref": "AWS::AccountId"
+								},
+								"/scripts/native-iceberg-create.py"
+							]
+						]
+					}
+				},
+				"DefaultArguments": {
+					"--job-bookmark-option": "job-bookmark-enable",
+					"--conf": "spark.sql.extensions=org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions",
+					"--target_db": {
+						"Ref": "LFIcebergGlueDatabase"
+					},
+					"--datalake-formats": "iceberg",
+					"--target_bucket": {
+						"Ref": "OTFDataLakeBucket"
+					}
+				},
+				"ExecutionProperty": {
+					"MaxConcurrentRuns": 2
+				},
+				"MaxRetries": 0,
+				"Name": "native-iceberg-create",
+				"GlueVersion": 3.0,
+				"WorkerType": "G.1X",
+				"NumberOfWorkers": 4,
+				"Role": {
+					"Ref": "GlueServiceRole"
+				}
+			}
+		},
+
+		"HudiJob": {
+			"Type": "AWS::Glue::Job",
+			"Properties": {
+				"Command": {
+					"Name": "glueetl",
+					"PythonVersion": "3",
+					"ScriptLocation": {
+						"Fn::Join": [
+							"",
+							[
+								"s3://",
+								"lf-otf-tutorial-",
+								{
+									"Ref": "AWS::AccountId"
+								},
+								"/scripts/native-hudi-create.py"
+							]
+						]
+					}
+				},
+				"DefaultArguments": {
+					"--job-bookmark-option": "job-bookmark-enable",
+					"--conf": "spark.serializer=org.apache.spark.serializer.KryoSerializer --conf spark.sql.hive.convertMetastoreParquet=false --conf spark.sql.extensions=org.apache.spark.sql.hudi.HoodieSparkSessionExtension",
+					"--target_db": {
+						"Ref": "LFHudiGlueDatabase"
+					},
+					"--datalake-formats": "hudi",
+					"--target_bucket": {
+						"Ref": "OTFDataLakeBucket"
+					}
+				},
+				"ExecutionProperty": {
+					"MaxConcurrentRuns": 2
+				},
+				"MaxRetries": 0,
+				"Name": "native-hudi-create",
+				"GlueVersion": 3.0,
+				"WorkerType": "G.1X",
+				"NumberOfWorkers": 4,
+				"Role": {
+					"Ref": "GlueServiceRole"
+				}
+			}
+		},
+		"DeltaJob": {
+			"Type": "AWS::Glue::Job",
+			"Properties": {
+				"Command": {
+					"Name": "glueetl",
+					"PythonVersion": "3",
+					"ScriptLocation": {
+						"Fn::Join": [
+							"",
+							[
+								"s3://",
+								"lf-otf-tutorial-",
+								{
+									"Ref": "AWS::AccountId"
+								},
+								"/scripts/native-delta-create.py"
+							]
+						]
+					}
+				},
+				"DefaultArguments": {
+					"--job-bookmark-option": "job-bookmark-enable",
+					"--conf": "spark.sql.extensions=io.delta.sql.DeltaSparkSessionExtension --conf spark.sql.catalog.spark_catalog=org.apache.spark.sql.delta.catalog.DeltaCatalog",
+					"--target_db": {
+						"Ref": "LFDeltaGlueDatabase"
+					},
+					"--datalake-formats": "delta",
+					"--target_bucket": {
+						"Ref": "OTFDataLakeBucket"
+					},
+					"--crawler_role": {
+						"Ref": "GlueServiceRole"
+					}
+				},
+				"ExecutionProperty": {
+					"MaxConcurrentRuns": 2
+				},
+				"MaxRetries": 0,
+				"Name": "native-delta-create",
+				"GlueVersion": 4.0,
+				"WorkerType": "G.1X",
+				"NumberOfWorkers": 4,
+				"Role": {
+					"Ref": "GlueServiceRole"
+				}
+			}
+		},
+		"CopyIcebergData": {
+			"Type": "Custom::CopyData",
+			"Properties": {
+				"ServiceToken": {
+					"Fn::GetAtt": ["CopyDataLambdaFunction", "Arn"]
+				},
+				"DestBucket": {
+					"Ref": "LFTutorialBucket"
+				},
+				"SourceBucket": {
+					"Fn::FindInMap": ["GlueScriptLocation", "iceberg", "SourceBucket"]
+				},
+				"Prefix": {
+					"Fn::FindInMap": ["GlueScriptLocation", "iceberg", "Prefix"]
+				},
+				"Objects": [{
+					"Fn::FindInMap": ["GlueScriptLocation", "iceberg", "Objects"]
+				}]
+			}
+		},
+    "CleanUpBucketonDeleteLambdaRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [{
+            "Effect": "Allow",
+            "Principal": {
+              "Service": [
+                "lambda.amazonaws.com"
+              ]
+            },
+            "Action": "sts:AssumeRole"
+          }]
+        },
+        "ManagedPolicyArns": [
+          "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+        ],
+
+        "Policies": [{
+          "PolicyName": "CleanUpBucketonDeleteLambdaPolicy",
+          "PolicyDocument": {
+            "Version": "2012-10-17",
+            "Statement": [{
+              "Effect": "Allow",
+              "Action": [
+                "s3:Get*",
+                "s3:List*",
+                "s3:DeleteObject*",
+                "s3:PutBucketVersioning"
+              ],
+              "Resource": [{
+                  "Fn::Join": [
+                    "",
+                    [
+                      "arn:aws:s3:::",
+                      {
+                        "Ref": "LFTutorialBucket"
+                      },
+                      "/*"
+                    ]
+                  ]
+                },
+                {
+                    "Fn::Join": [
+                      "",
+                      [
+                        "arn:aws:s3:::",
+                        {
+                          "Ref": "OTFDataLakeBucket"
+                        },
+                        "/*"
+                      ]
+                    ]
+                  },
+                  {
+                    "Fn::Join": [
+                      "",
+                      [
+                        "arn:aws:s3:::",
+                        {
+                          "Ref": "OTFDataLakeBucket"
+                        }
+                      ]
+                    ]
+                  }
+              ]
+            }]
+          }
+        }],
+        "RoleName": "LF-LambdaEmptyBucketServiceRole"
+      }
+    },
+    "CleanUpBucketonDeleteLambda": {
+      "DependsOn": [
+        "CleanUpBucketonDeleteLambdaRole"
+      ],
+      "Type": "AWS::Lambda::Function",
+      "Properties": {
+        "Description": "Empty bucket on delete",
+        "Handler": "index.lambda_handler",
+        "Role": {
+          "Fn::GetAtt": ["CleanUpBucketonDeleteLambdaRole", "Arn"]
+        },
+        "Runtime": "python3.7",
+        "Timeout": 60,
+        "Code": {
+          "ZipFile": {
+            "Fn::Join": [
+							"\n",
+              [
+                "import json",
+                "import boto3",
+                "import urllib3",
+                "",
+                "def empty_bucket(bucket_name):",
+                "    print(\"Attempting to empty the bucket {0}\".format(bucket_name))",
+                "    s3_client = boto3.client('s3')",
+                "    s3 = boto3.resource('s3')",
+                "",
+                "    try:",
+                "        bucket = s3.Bucket(bucket_name).load()",
+                "    except ClientError:",
+                "        print(\"Bucket {0} does not exist\".format(bucket_name))",
+                "        return",
+                "    # Confirm if versioning is enabled",
+                "    version_status = s3_client.get_bucket_versioning(Bucket=bucket_name)",
+                "    status = version_status.get('Status','')",
+                "    if status == 'Enabled':",
+                "        version_status = s3_client.put_bucket_versioning(Bucket=bucket_name,",
+                "                                                   VersioningConfiguration={'Status': 'Suspended'})",
+                "    version_paginator = s3_client.get_paginator('list_object_versions')",
+                "    version_iterator = version_paginator.paginate(",
+                "        Bucket=bucket_name",
+                "    )",
+                "",
+                "    for page in version_iterator:",
+                "        print(page)",
+                "        if 'DeleteMarkers' in page:",
+                "            delete_markers = page['DeleteMarkers']",
+                "            if delete_markers is not None:",
+                "                for delete_marker in delete_markers:",
+                "                    key = delete_marker['Key']",
+                "                    versionId = delete_marker['VersionId']",
+                "                    s3_client.delete_object(Bucket=bucket_name, Key=key, VersionId=versionId)",
+                "        if 'Versions' in page and page['Versions'] is not None:",
+                "            versions = page['Versions']",
+                "            for version in versions:",
+                "                print(version)",
+                "                key = version['Key']",
+                "                versionId = version['VersionId']",
+                "                s3_client.delete_object(Bucket=bucket_name, Key=key, VersionId=versionId)",
+                "    object_paginator = s3_client.get_paginator('list_objects_v2')",
+                "    object_iterator = object_paginator.paginate(",
+                "        Bucket=bucket_name",
+                "    )",
+                "    for page in object_iterator:",
+                "        if 'Contents' in page:",
+                "            for content in page['Contents']:",
+                "                key = content['Key']",
+                "                s3_client.delete_object(Bucket=bucket_name, Key=content['Key'])",
+                "    print(\"Successfully emptied the bucket {0}\".format(bucket_name))",
+                "",
+                "",
+                "",
+                "def lambda_handler(event, context):",
+                "    try:",
+                "        bucket = event['ResourceProperties']['inputBucketName']",
+                "        if event['RequestType'] == 'Delete':",
+                "            empty_bucket(bucket)",
+                "        sendResponse(event, context, \"SUCCESS\")",
+                "    except Exception as e:",
+                "        print(e)",
+                "        sendResponse(event, context, \"FAILED\")",
+                "",
+                "def sendResponse(event, context, status):",
+                "    http = urllib3.PoolManager()",
+                "    response_body = {'Status': status,",
+                "                     'Reason': 'Log stream name: ' + context.log_stream_name,",
+                "                     'PhysicalResourceId': context.log_stream_name,",
+                "                     'StackId': event['StackId'],",
+                "                     'RequestId': event['RequestId'],",
+                "                     'LogicalResourceId': event['LogicalResourceId'],",
+                "                     'Data': json.loads(\"{}\")}",
+                "    http.request('PUT', event['ResponseURL'], body=json.dumps(response_body))"
+              ]
+            ]
+          }
+        }
+      }
+    },
+      "CleanUpBucketonDelete": {
+        "DependsOn":[ "CleanUpBucketonDeleteLambda","OTFDataLakeBucket"],
+        "Type": "Custom::emptybucket",
+        "Properties": {
+          "ServiceToken": {
+  					"Fn::GetAtt": ["CleanUpBucketonDeleteLambda", "Arn"]
+  				},
+          "inputBucketName": {
+  					"Ref": "OTFDataLakeBucket"
+  				}
+        }
+
+    },
+		"CopyHudiData": {
+			"Type": "Custom::CopyData",
+			"Properties": {
+				"ServiceToken": {
+					"Fn::GetAtt": ["CopyDataLambdaFunction", "Arn"]
+				},
+				"DestBucket": {
+					"Ref": "LFTutorialBucket"
+				},
+				"SourceBucket": {
+					"Fn::FindInMap": ["GlueScriptLocation", "hudi", "SourceBucket"]
+				},
+				"Prefix": {
+					"Fn::FindInMap": ["GlueScriptLocation", "hudi", "Prefix"]
+				},
+				"Objects": [{
+					"Fn::FindInMap": ["GlueScriptLocation", "hudi", "Objects"]
+				}]
+			}
+		},
+		"CopyDeltaData": {
+			"Type": "Custom::CopyData",
+			"Properties": {
+				"ServiceToken": {
+					"Fn::GetAtt": ["CopyDataLambdaFunction", "Arn"]
+				},
+				"DestBucket": {
+					"Ref": "LFTutorialBucket"
+				},
+				"SourceBucket": {
+					"Fn::FindInMap": ["GlueScriptLocation", "delta", "SourceBucket"]
+				},
+				"Prefix": {
+					"Fn::FindInMap": ["GlueScriptLocation", "delta", "Prefix"]
+				},
+				"Objects": [{
+					"Fn::FindInMap": ["GlueScriptLocation", "delta", "Objects"]
+				}]
+			}
+		},
+		"GrantIcebergDBPermission": {
+			"Type": "AWS::LakeFormation::PrincipalPermissions",
+			"Properties": {
+				"Catalog": {
+					"Ref": "AWS::AccountId"
+				},
+				"Principal": {
+					"DataLakePrincipalIdentifier": {
+						"Fn::Join": [
+							"",
+							[
+								"arn:aws:iam::",
+								{
+									"Ref": "AWS::AccountId"
+								},
+								":role/",
+								{
+									"Ref": "GlueServiceRole"
+								}
+							]
+						]
+					}
+				},
+				"Permissions": ["DESCRIBE", "CREATE_TABLE"],
+				"PermissionsWithGrantOption": [],
+				"Resource": {
+
+					"Database": {
+						"CatalogId": {
+							"Ref": "AWS::AccountId"
+						},
+						"Name": {
+							"Ref": "LFIcebergGlueDatabase"
+						}
+					}
+				}
+			}
+		},
+		"GrantHudiDBPermission": {
+			"Type": "AWS::LakeFormation::PrincipalPermissions",
+			"Properties": {
+				"Catalog": {
+					"Ref": "AWS::AccountId"
+				},
+				"Principal": {
+					"DataLakePrincipalIdentifier": {
+						"Fn::Join": [
+							"",
+							[
+								"arn:aws:iam::",
+								{
+									"Ref": "AWS::AccountId"
+								},
+								":role/",
+								{
+									"Ref": "GlueServiceRole"
+								}
+							]
+						]
+					}
+				},
+				"Permissions": ["DESCRIBE", "CREATE_TABLE"],
+				"PermissionsWithGrantOption": [],
+				"Resource": {
+
+					"Database": {
+						"CatalogId": {
+							"Ref": "AWS::AccountId"
+						},
+						"Name": {
+							"Ref": "LFHudiGlueDatabase"
+						}
+					}
+				}
+			}
+		},
+		"GrantDeltaDBPermission": {
+			"Type": "AWS::LakeFormation::PrincipalPermissions",
+			"Properties": {
+				"Catalog": {
+					"Ref": "AWS::AccountId"
+				},
+				"Principal": {
+					"DataLakePrincipalIdentifier": {
+						"Fn::Join": [
+							"",
+							[
+								"arn:aws:iam::",
+								{
+									"Ref": "AWS::AccountId"
+								},
+								":role/",
+								{
+									"Ref": "GlueServiceRole"
+								}
+							]
+						]
+					}
+				},
+				"Permissions": ["DESCRIBE", "CREATE_TABLE"],
+				"PermissionsWithGrantOption": [],
+				"Resource": {
+
+					"Database": {
+						"CatalogId": {
+							"Ref": "AWS::AccountId"
+						},
+						"Name": {
+							"Ref": "LFDeltaGlueDatabase"
+						}
+					}
+				}
+			}
+		},
+    
+  "LFDataLakeSettingsLambda": {
+    "Type": "AWS::LakeFormation::DataLakeSettings",
+    "DependsOn": [
+      "GlueServiceRole"
+    ],
+    "Properties": {
+      "Admins": [
+        {
+          "DataLakePrincipalIdentifier": {
+  					"Fn::GetAtt": ["GlueServiceRole", "Arn"]
+  				}
+        }
+      ]
+    }
+  }
+
+	},
+	"Outputs": {
+		"OTFDataLakeBucket": {
+			"Description": "Data Lake Bucket Name",
+			"Value": {
+				"Ref": "OTFDataLakeBucket"
+			}
+		},
+		"HudiDatabaseName": {
+			"Description": "Hudi Data Lake Bucket Name",
+			"Value": {
+				"Ref": "LFHudiGlueDatabase"
+			}
+		},
+		"IcebergDatabaseName": {
+			"Description": "Iceberg Data Lake Bucket Name",
+			"Value": {
+				"Ref": "LFIcebergGlueDatabase"
+			}
+		},
+		"DeltaLakeDatabaseName": {
+			"Description": "Delta Lake Bucket Name",
+			"Value": {
+				"Ref": "LFDeltaGlueDatabase"
+			}
+		},
+    "HudiJob": {
+			"Description": "Hudi Glue Job Name",
+			"Value": {
+				"Ref": "HudiJob"
+			}
+		},
+		"DeltaJob": {
+			"Description": "Delta Glue Job Name",
+			"Value": {
+				"Ref": "DeltaJob"
+			}
+		},
+		"IcebergJob": {
+			"Description": "Iceberg Glue Job Name",
+			"Value": {
+				"Ref": "IcebergJob"
+			}
+		},
+    "LFRegisterServiceRole": {
+      "Description": "IAM role for registering datalake",
+      "Value": {
+        "Ref": "LFRegisterServiceRole"
+      }
+    },
+    "GlueServiceRoleTransactionalDataLake": {
+      "Description": "Glue Job IAM role",
+      "Value": {
+        "Ref": "GlueServiceRole"
+      }
+    },
+		"AthenaQueryResultLocation": {
+			"Description": "Athena Query Result Location",
+			"Value": {
+				"Fn::Join": [
+					"",
+					[
+						"s3://",
+						{
+							"Ref": "LFTutorialBucket"
+						},
+						"/athena-results/"
+					]
+				]
+			}
+		},
+    "BusinessAnalystUser": {
+      "Description": "Business Analyst IAM User Name",
+      "Value": {
+        "Ref": "BusinessAnalystUser"
+      }
+    },
+		"BusinessAnalystUserCredentials": {
+			"Description": "AWS Secrets Manager Secret Name for BusinessAnalystUser credentials",
+			"Value": {
+				"Fn::Sub": "https://${AWS::Region}.console.aws.amazon.com/secretsmanager/secret?name=${AWS::StackName}-lf-consumer-analystuser-credentials"
+			}
+		},
+		"ConsoleIAMLoginUrl": {
+			"Description": "Console IAM Login URL to try out different users",
+			"Value": {
+				"Fn::Join": [
+					"",
+					[
+						"https://",
+						{
+							"Ref": "AWS::AccountId"
+						},
+						".signin.aws.amazon.com/console"
+					]
+				]
+			}
+		}
+	}
+}
