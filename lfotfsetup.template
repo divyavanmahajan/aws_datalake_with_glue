@@ -1,7 +1,7 @@
 {
 	"Description": "CloudFormation template to create AWS Lake Formation Resources",
 	"Parameters": {
-		"_arn_prefix": {
+		"ARNPrefix": {
 			"Type": "String",
 			"Default": "arn:aws",
 			"AllowedValues": [
@@ -9,6 +9,16 @@
 				"arn:aws-cn"
 			],
 			"Description": "Prefix for resource ARNs. Enter arn:aws, arn:aws-cn. Default is arn:aws."
+		},
+		"NamePrefix": {
+			"Type": "String",
+			"Default": "lf",
+			"Description": "Prefix for global resource identifiers  Default is nothing."
+		},
+		"BusinessUserName": {
+			"Type": "String",
+			"Default": "lf-dataplatform-analystuser",
+			"Description": "Business analyst user to create for testing Athena."
 		}
 	},
 	"Mappings": {
@@ -93,7 +103,7 @@
 							"",
 							[
 								{
-									"Ref": "_arn_prefix"
+									"Ref": "ARNPrefix"
 								},
 								":iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
 							]
@@ -104,7 +114,7 @@
 							"",
 							[
 								{
-									"Ref": "_arn_prefix"
+									"Ref": "ARNPrefix"
 								},
 								":iam::aws:policy/AmazonS3ReadOnlyAccess"
 							]
@@ -128,7 +138,7 @@
 												"",
 												[
 													{
-														"Ref": "_arn_prefix"
+														"Ref": "ARNPrefix"
 													},
 													":s3:::",
 													{
@@ -143,7 +153,7 @@
 												"",
 												[
 													{
-														"Ref": "_arn_prefix"
+														"Ref": "ARNPrefix"
 													},
 													":s3:::",
 													{
@@ -157,7 +167,7 @@
 												"",
 												[
 													{
-														"Ref": "_arn_prefix"
+														"Ref": "ARNPrefix"
 													},
 													":s3:::",
 													"lf-public",
@@ -170,7 +180,7 @@
 												"",
 												[
 													{
-														"Ref": "_arn_prefix"
+														"Ref": "ARNPrefix"
 													},
 													":s3:::",
 													"lf-public"
@@ -183,7 +193,17 @@
 						}
 					}
 				],
-				"RoleName": "LF-LambdaServiceRole"
+				"RoleName": {
+					"Fn::Join": [
+						"-",
+						[
+							{
+								"Ref": "NamePrefix"
+							},
+							"LambdaServiceRole"
+						]
+					]
+				}
 			}
 		},
 		"CopyDataLambdaFunction": {
@@ -237,7 +257,7 @@
 												"",
 												[
 													{
-														"Ref": "_arn_prefix"
+														"Ref": "ARNPrefix"
 													},
 													":s3:::",
 													{
@@ -252,7 +272,7 @@
 												"",
 												[
 													{
-														"Ref": "_arn_prefix"
+														"Ref": "ARNPrefix"
 													},
 													":s3:::",
 													{
@@ -267,7 +287,17 @@
 						}
 					}
 				],
-				"RoleName": "LF-Dataplatform-RegisterRole"
+				"RoleName": {
+					"Fn::Join": [
+						"-",
+						[
+							{
+								"Ref": "NamePrefix"
+							},
+							"Dataplatform-RegisterRole"
+						]
+					]
+				}
 			}
 		},
 		"GlueServiceRole": {
@@ -294,7 +324,7 @@
 							"",
 							[
 								{
-									"Ref": "_arn_prefix"
+									"Ref": "ARNPrefix"
 								},
 								":iam::aws:policy/service-role/AWSGlueServiceRole"
 							]
@@ -318,7 +348,7 @@
 												"",
 												[
 													{
-														"Ref": "_arn_prefix"
+														"Ref": "ARNPrefix"
 													},
 													":s3:::",
 													{
@@ -333,7 +363,7 @@
 												"",
 												[
 													{
-														"Ref": "_arn_prefix"
+														"Ref": "ARNPrefix"
 													},
 													":s3:::",
 													{
@@ -347,7 +377,7 @@
 												"",
 												[
 													{
-														"Ref": "_arn_prefix"
+														"Ref": "ARNPrefix"
 													},
 													":s3:::",
 													{
@@ -362,7 +392,7 @@
 												"",
 												[
 													{
-														"Ref": "_arn_prefix"
+														"Ref": "ARNPrefix"
 													},
 													":s3:::",
 													{
@@ -394,7 +424,17 @@
 						}
 					}
 				],
-				"RoleName": "LF-Dataplatform-GlueServiceRole"
+				"RoleName": {
+					"Fn::Join": [
+						"-",
+						[
+							{
+								"Ref": "NamePrefix"
+							},
+							"Dataplatform-GlueServiceRole"
+						]
+					]
+				}
 			}
 		},
 		"OTFDataLakeBucket": {
@@ -404,7 +444,10 @@
 					"Fn::Join": [
 						"-",
 						[
-							"lf-dataplatform-datalake",
+							{
+								"Ref": "NamePrefix"
+							},
+							"dataplatform-datalake",
 							{
 								"Ref": "AWS::AccountId"
 							}
@@ -420,7 +463,10 @@
 					"Fn::Join": [
 						"-",
 						[
-							"lf-dataplatform-silver",
+							{
+								"Ref": "NamePrefix"
+							},
+							"dataplatform-silver",
 							{
 								"Ref": "AWS::AccountId"
 							}
@@ -434,10 +480,34 @@
 			"Properties": {
 				"Description": "Secret password",
 				"Name": {
-					"Fn::Sub": "${AWS::StackName}-lf-consumer-analystuser-credentials"
+					"Fn::Join": [
+						"-",
+						[
+							{
+								"Ref": "AWS::StackName"
+							},
+							{
+								"Ref": "BusinessUserName"
+							},
+							"credentials"
+						]
+					]
 				},
 				"GenerateSecretString": {
-					"SecretStringTemplate": "{\"username\":\"lf-consumer-analystuser\"}",
+					"SecretStringTemplate": {
+						"Fn::Join": [
+							"\"",
+							[
+								"{",
+								"username",
+								":",
+								{
+									"Ref": "BusinessUserName"
+								},
+								"}"
+							]
+						]
+					},
 					"GenerateStringKey": "password",
 					"PasswordLength": 16,
 					"ExcludeCharacters": "\"@/\\"
@@ -473,7 +543,7 @@
 												"",
 												[
 													{
-														"Ref": "_arn_prefix"
+														"Ref": "ARNPrefix"
 													},
 													":s3:::",
 													{
@@ -495,14 +565,16 @@
 							"",
 							[
 								{
-									"Ref": "_arn_prefix"
+									"Ref": "ARNPrefix"
 								},
 								":iam::aws:policy/AmazonAthenaFullAccess"
 							]
 						]
 					}
 				],
-				"UserName": "lf-dataplatform-analystuser"
+				"UserName": {
+					"Ref": "BusinessUserName"
+				}
 			}
 		},
 		"IcebergJob": {
@@ -516,7 +588,10 @@
 							"",
 							[
 								"s3://",
-								"lf-dataplatform-silver-",
+								{
+									"Ref": "NamePrefix"
+								},
+								"-dataplatform-silver-",
 								{
 									"Ref": "AWS::AccountId"
 								},
@@ -560,7 +635,10 @@
 							"",
 							[
 								"s3://",
-								"lf-dataplatform-silver-",
+								{
+									"Ref": "NamePrefix"
+								},
+								"-dataplatform-silver-",
 								{
 									"Ref": "AWS::AccountId"
 								},
@@ -604,7 +682,10 @@
 							"",
 							[
 								"s3://",
-								"lf-dataplatform-silver-",
+								{
+									"Ref": "NamePrefix"
+								},
+								"-dataplatform-silver-",
 								{
 									"Ref": "AWS::AccountId"
 								},
@@ -700,7 +781,7 @@
 							"",
 							[
 								{
-									"Ref": "_arn_prefix"
+									"Ref": "ARNPrefix"
 								},
 								":iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
 							]
@@ -727,7 +808,7 @@
 												"",
 												[
 													{
-														"Ref": "_arn_prefix"
+														"Ref": "ARNPrefix"
 													},
 													":s3:::",
 													{
@@ -742,7 +823,7 @@
 												"",
 												[
 													{
-														"Ref": "_arn_prefix"
+														"Ref": "ARNPrefix"
 													},
 													":s3:::",
 													{
@@ -757,7 +838,7 @@
 												"",
 												[
 													{
-														"Ref": "_arn_prefix"
+														"Ref": "ARNPrefix"
 													},
 													":s3:::",
 													{
@@ -772,7 +853,17 @@
 						}
 					}
 				],
-				"RoleName": "LF-LambdaEmptyBucketServiceRole"
+				"RoleName": {
+					"Fn::Join": [
+						"-",
+						[
+							{
+								"Ref": "NamePrefix"
+							},
+							"LambdaEmptyBucketServiceRole"
+						]
+					]
+				}
 			}
 		},
 		"CleanUpBucketonDeleteLambda": {
@@ -980,7 +1071,7 @@
 							"",
 							[
 								{
-									"Ref": "_arn_prefix"
+									"Ref": "ARNPrefix"
 								},
 								":iam::",
 								{
@@ -1023,7 +1114,7 @@
 							"",
 							[
 								{
-									"Ref": "_arn_prefix"
+									"Ref": "ARNPrefix"
 								},
 								":iam::",
 								{
@@ -1066,7 +1157,7 @@
 							"",
 							[
 								{
-									"Ref": "_arn_prefix"
+									"Ref": "ARNPrefix"
 								},
 								":iam::",
 								{
